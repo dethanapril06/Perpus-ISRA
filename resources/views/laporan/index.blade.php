@@ -113,9 +113,8 @@
                         </div>
                         @endif
 
-                        <div class="col-md-3 d-flex gap-2">
-                            <button type="submit" class="btn btn-primary w-100"><i class="bx bx-filter-alt"></i> Tampilkan</button>
-                            <a href="{{ route('laporan.cetak', [
+                        @php
+                            $exportParams = [
                                 'jenis' => $tab,
                                 'tgl_mulai' => $tglMulai,
                                 'tgl_selesai' => $tglSelesai,
@@ -123,8 +122,15 @@
                                 'kondisi' => request('kondisi_kembali'),
                                 'status_bayar' => request('status_bayar'),
                                 'id_kategori' => request('id_kategori'),
-                            ]) }}" target="_blank" class="btn btn-outline-success">
-                                <i class="bx bx-printer"></i> Cetak
+                            ];
+                        @endphp
+                        <div class="col-md-3 d-flex gap-2 flex-wrap flex-xl-nowrap">
+                            <button type="submit" class="btn btn-primary"><i class="bx bx-filter-alt"></i></button>
+                            <a href="{{ route('laporan.cetak', $exportParams) }}" target="_blank" class="btn btn-outline-danger" title="Cetak / Ekspor PDF">
+                                <i class="bx bx-printer"></i>
+                            </a>
+                            <a href="{{ route('laporan.export_excel', $exportParams) }}" class="btn btn-outline-success" title="Ekspor ke Excel (.xlsx)">
+                                <i class="bx bx-spreadsheet"></i>
                             </a>
                         </div>
                     </form>

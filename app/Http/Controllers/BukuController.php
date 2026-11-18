@@ -7,12 +7,19 @@ use App\Models\EksemplarBuku;
 use App\Models\Kategori;
 use App\Models\Lemari;
 use App\Models\Laci;
+use App\Models\Peminjaman;
 use App\Models\ActivityLog;
 use App\Helpers\XlsxHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class BukuController extends Controller
 {
@@ -310,19 +317,161 @@ class BukuController extends Controller
             if (!is_dir($dir)) {
                 mkdir($dir, 0755, true);
             }
+
+            $spreadsheet = new Spreadsheet();
+
+            // Sheet 1: Data Template (dibaca oleh XlsxHelper::read saat impor)
+            $dataSheet = $spreadsheet->getActiveSheet();
+            $dataSheet->setTitle('Template Buku & Eksemplar');
+
             $sampleRows = [
-                ['kode_induk_buku', 'kode_eksemplar', 'judul', 'pengarang', 'penerbit', 'tahun', 'isbn', 'kategori', 'kode_laci', 'no_inventaris', 'kondisi', 'status', 'deskripsi'],
-                ['BK-2026-0001', 'BK-2026-0001.01', 'Laskar Pelangi', 'Andrea Hirata', 'Bentang Pustaka', '2008', '978-979-3062-79-2', 'Fiksi', 'L-01', 'INV/2026/001-01', 'baik', 'tersedia', 'Kisah 10 anak laskar pelangi di Belitung'],
-                ['BK-2026-0001', 'BK-2026-0001.02', 'Laskar Pelangi', 'Andrea Hirata', 'Bentang Pustaka', '2008', '978-979-3062-79-2', 'Fiksi', 'L-01', 'INV/2026/001-02', 'baik', 'tersedia', 'Eksemplar fisik ke-2'],
-                ['BK-2026-0002', 'BK-2026-0002.01', 'Bumi Manusia', 'Pramoedya Ananta Toer', 'Hasta Mitra', '2005', '978-979-97312-3-4', 'Sastra', 'L-01', 'INV/2026/002-01', 'baik', 'tersedia', 'Novel tetralogi buru'],
-                ['', '', 'Matematika untuk SMA/MA Kelas X', 'B.K. Noormandiri', 'Erlangga', '2022', '978-623-266-614-6', 'Pelajaran', 'L-02', '', 'baik', 'tersedia', 'Buku teks kurikulum merdeka'],
-                ['', '', 'Matematika untuk SMA/MA Kelas X', 'B.K. Noormandiri', 'Erlangga', '2022', '978-623-266-614-6', 'Pelajaran', 'L-02', '', 'baik', 'tersedia', 'Eksemplar fisik ke-2 (otomatis .02)'],
+                ['kode_induk_buku', 'kode_eksemplar', 'judul', 'pengarang', 'penerbit', 'tahun', 'isbn', 'kategori', 'kode_lemari', 'kode_laci', 'no_inventaris', 'kondisi', 'status', 'deskripsi'],
+                ['BK-2026-0001', 'BK-2026-0001.01', 'Laskar Pelangi', 'Andrea Hirata', 'Bentang Pustaka', '2008', '978-979-3062-79-2', 'Fiksi', 'LMR-01', 'L-01', 'INV/2026/001-01', 'baik', 'tersedia', 'Kisah 10 anak laskar pelangi di Belitung'],
+                ['BK-2026-0001', 'BK-2026-0001.02', 'Laskar Pelangi', 'Andrea Hirata', 'Bentang Pustaka', '2008', '978-979-3062-79-2', 'Fiksi', 'LMR-01', 'L-01', 'INV/2026/001-02', 'baik', 'tersedia', 'Eksemplar fisik ke-2'],
+                ['BK-2026-0002', 'BK-2026-0002.01', 'Bumi Manusia', 'Pramoedya Ananta Toer', 'Hasta Mitra', '2005', '978-979-97312-3-4', 'Sastra', 'LMR-01', 'L-01', 'INV/2026/002-01', 'baik', 'tersedia', 'Novel tetralogi buru'],
+                ['', '', 'Matematika untuk SMA/MA Kelas X', 'B.K. Noormandiri', 'Erlangga', '2022', '978-623-266-614-6', 'Pelajaran', 'LMR-02', 'L-02', '', 'baik', 'tersedia', 'Buku teks kurikulum merdeka'],
+                ['', '', 'Matematika untuk SMA/MA Kelas X', 'B.K. Noormandiri', 'Erlangga', '2022', '978-623-266-614-6', 'Pelajaran', 'LMR-02', 'L-02', '', 'baik', 'tersedia', 'Eksemplar fisik ke-2 (otomatis .02)'],
             ];
-            XlsxHelper::create($filePath, $sampleRows, 'Template Buku & Eksemplar');
+
+            foreach ($sampleRows as $rowIdx => $rowValues) {
+                foreach ($rowValues as $colIdx => $value) {
+                    $colLetter = Coordinate::stringFromColumnIndex($colIdx + 1);
+                    $dataSheet->setCellValue("{$colLetter}" . ($rowIdx + 1), $value);
+                }
+            }
+
+            $lastDataCol = Coordinate::stringFromColumnIndex(count($sampleRows[0]));
+            $lastDataRow = count($sampleRows);
+
+            $dataSheet->getStyle("A1:{$lastDataCol}1")->applyFromArray([
+                'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF']],
+                'fill' => [
+                    'fillType' => Fill::FILL_SOLID,
+                    'startColor' => ['rgb' => '4F46E5'],
+                ],
+                'alignment' => [
+                    'horizontal' => Alignment::HORIZONTAL_CENTER,
+                    'vertical' => Alignment::VERTICAL_CENTER,
+                ],
+            ]);
+            $dataSheet->getStyle("A1:{$lastDataCol}{$lastDataRow}")->applyFromArray([
+                'borders' => [
+                    'allBorders' => [
+                        'borderStyle' => Border::BORDER_THIN,
+                        'color' => ['rgb' => 'D1D5DB'],
+                    ],
+                ],
+            ]);
+            for ($i = 1; $i <= count($sampleRows[0]); $i++) {
+                $dataSheet->getColumnDimension(Coordinate::stringFromColumnIndex($i))->setAutoSize(true);
+            }
+
+            // Sheet 2: Petunjuk Pengisian
+            $guideSheet = $spreadsheet->createSheet();
+            $guideSheet->setTitle('Petunjuk Pengisian');
+
+            $guideSheet->setCellValue('A1', 'PETUNJUK PENGISIAN TEMPLATE IMPOR BUKU & EKSEMPLAR');
+            $guideSheet->mergeCells('A1:D1');
+            $guideSheet->getStyle('A1')->getFont()->setBold(true)->setSize(13);
+
+            $generalRules = [
+                ['Aturan Umum:', ''],
+                ['1. Sheet Data Utama', 'Isi data buku & eksemplar pada sheet pertama ("Template Buku & Eksemplar"). Jangan ubah atau hapus nama header kolom pada baris ke-1.'],
+                ['2. Konsep 1 Baris = 1 Eksemplar', 'Setiap baris mewakili 1 eksemplar fisik buku. Jika 1 judul memiliki 3 eksemplar, buat 3 baris dengan Judul (dan Pengarang) yang sama.'],
+                ['3. Format File', 'Simpan file dalam format Excel (.xlsx), ukuran maksimal 10 MB.'],
+                ['4. Contoh Data', 'Baris contoh pada sheet pertama boleh dihapus atau diganti dengan data buku sebenarnya sebelum diimpor.'],
+                ['5. Mode Duplikasi', 'Saat mengunggah, pilih "Lewati (Skip)" agar kode_eksemplar yang sudah ada tidak berubah, atau "Perbarui (Update)" untuk memperbarui lokasi laci, kondisi, dan status.'],
+            ];
+
+            $rowCursor = 3;
+            foreach ($generalRules as $idx => $rule) {
+                $guideSheet->setCellValue("A{$rowCursor}", $rule[0]);
+                $guideSheet->setCellValue("B{$rowCursor}", $rule[1]);
+                $guideSheet->mergeCells("B{$rowCursor}:D{$rowCursor}");
+                if ($idx === 0) {
+                    $guideSheet->getStyle("A{$rowCursor}")->getFont()->setBold(true)->setSize(11);
+                } else {
+                    $guideSheet->getStyle("A{$rowCursor}")->getFont()->setBold(true);
+                }
+                $rowCursor++;
+            }
+
+            $colGuideHeaderRow = $rowCursor + 1;
+            $guideHeaders = ['Nama Kolom', 'Sifat', 'Keterangan & Aturan Pengisian', 'Contoh / Nilai yang Diizinkan'];
+            foreach ($guideHeaders as $colIdx => $headerText) {
+                $colLetter = Coordinate::stringFromColumnIndex($colIdx + 1);
+                $guideSheet->setCellValue("{$colLetter}{$colGuideHeaderRow}", $headerText);
+            }
+            $guideSheet->getStyle("A{$colGuideHeaderRow}:D{$colGuideHeaderRow}")->applyFromArray([
+                'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF']],
+                'fill' => [
+                    'fillType' => Fill::FILL_SOLID,
+                    'startColor' => ['rgb' => '198754'],
+                ],
+                'alignment' => [
+                    'horizontal' => Alignment::HORIZONTAL_CENTER,
+                    'vertical' => Alignment::VERTICAL_CENTER,
+                ],
+            ]);
+
+            $columnGuides = [
+                ['kode_induk_buku', 'Opsional', 'Kode induk bibliografi buku. Jika dikosongkan, sistem otomatis membuatkan kode berurutan (BK-TAHUN-XXXX).', 'BK-2026-0001 (atau kosongkan)'],
+                ['kode_eksemplar', 'Opsional', 'Kode barcode unik untuk tiap fisik buku. Jika dikosongkan, sistem otomatis membuatkan (<kode_induk>.01, .02, dst).', 'BK-2026-0001.01 (atau kosongkan)'],
+                ['judul', 'WAJIB', 'Judul lengkap buku. Baris tanpa judul akan otomatis dilewati saat proses impor.', 'Laskar Pelangi'],
+                ['pengarang', 'Opsional', 'Nama penulis/pengarang buku. Digunakan bersama judul untuk mencocokkan buku induk yang sama.', 'Andrea Hirata'],
+                ['penerbit', 'Opsional', 'Nama penerbit buku.', 'Bentang Pustaka'],
+                ['tahun', 'Opsional', 'Tahun terbit buku dalam format angka 4 digit.', '2008'],
+                ['isbn', 'Opsional', 'Nomor ISBN buku (boleh menggunakan tanda hubung atau angka saja).', '978-979-3062-79-2'],
+                ['kategori', 'Opsional', 'Nama kategori buku. Jika belum terdaftar di sistem, kategori baru akan otomatis dibuat.', 'Fiksi / Pelajaran / Sastra'],
+                ['kode_lemari', 'Opsional', 'Kode lemari penyimpanan (misal LMR-01). Jika kode_laci belum ada dan kode_lemari diisi, lemari & laci otomatis dibuat.', 'LMR-01'],
+                ['kode_laci', 'Opsional', 'Kode laci penyimpanan sesuai master Lemari & Laci. Jika belum ada, isi kode_lemari agar otomatis dibuat.', 'L-01'],
+                ['no_inventaris', 'Opsional', 'Nomor inventaris internal perpustakaan untuk eksemplar tersebut.', 'INV/2026/001-01'],
+                ['kondisi', 'Opsional', 'Kondisi fisik buku. Jika kosong atau tidak sesuai pilihan, otomatis diisi "baik".', 'baik | rusak | hilang'],
+                ['status', 'Opsional', 'Status ketersediaan buku. Jika kosong atau tidak sesuai pilihan, otomatis diisi "tersedia".', 'tersedia | dipinjam | rusak | hilang'],
+                ['deskripsi', 'Opsional', 'Catatan atau sinopsis singkat mengenai buku.', 'Buku teks kurikulum merdeka'],
+            ];
+
+            $guideRow = $colGuideHeaderRow + 1;
+            foreach ($columnGuides as $item) {
+                $guideSheet->setCellValue("A{$guideRow}", $item[0]);
+                $guideSheet->setCellValue("B{$guideRow}", $item[1]);
+                $guideSheet->setCellValue("C{$guideRow}", $item[2]);
+                $guideSheet->setCellValue("D{$guideRow}", $item[3]);
+                if ($item[1] === 'WAJIB') {
+                    $guideSheet->getStyle("B{$guideRow}")->getFont()->setBold(true)->getColor()->setRGB('DC3545');
+                }
+                $guideRow++;
+            }
+
+            $lastGuideRow = $guideRow - 1;
+            $guideSheet->getStyle("A{$colGuideHeaderRow}:D{$lastGuideRow}")->applyFromArray([
+                'borders' => [
+                    'allBorders' => [
+                        'borderStyle' => Border::BORDER_THIN,
+                        'color' => ['rgb' => 'CBD5E1'],
+                    ],
+                ],
+                'alignment' => [
+                    'vertical' => Alignment::VERTICAL_TOP,
+                    'wrapText' => true,
+                ],
+            ]);
+
+            $guideSheet->getColumnDimension('A')->setWidth(22);
+            $guideSheet->getColumnDimension('B')->setWidth(14);
+            $guideSheet->getColumnDimension('C')->setWidth(62);
+            $guideSheet->getColumnDimension('D')->setWidth(34);
+
+            $spreadsheet->setActiveSheetIndex(0);
+            $writer = new Xlsx($spreadsheet);
+            $writer->save($filePath);
         }
 
         return response()->download($filePath, 'template_import_buku.xlsx', [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma' => 'no-cache',
+            'Expires' => '0',
         ]);
     }
 
@@ -360,6 +509,7 @@ class BukuController extends Controller
             'tahun' => array_search('tahun', $header),
             'isbn' => array_search('isbn', $header),
             'kategori' => array_search('kategori', $header),
+            'kode_lemari' => array_search('kode_lemari', $header),
             'kode_laci' => array_search('kode_laci', $header),
             'no_inventaris' => array_search('no_inventaris', $header),
             'kondisi' => array_search('kondisi', $header),
@@ -383,6 +533,11 @@ class BukuController extends Controller
             $kategoriMap = [];
             foreach (Kategori::all() as $k) {
                 $kategoriMap[strtolower(trim($k->nama_kategori))] = $k;
+            }
+
+            $lemariMap = [];
+            foreach (Lemari::all() as $lm) {
+                $lemariMap[strtolower(trim($lm->kode_lemari))] = $lm;
             }
 
             $laciMap = [];
@@ -416,6 +571,7 @@ class BukuController extends Controller
                 $tahun = ($colMap['tahun'] !== false && isset($row[$colMap['tahun']]) && is_numeric(trim($row[$colMap['tahun']]))) ? (int)trim($row[$colMap['tahun']]) : null;
                 $isbn = ($colMap['isbn'] !== false && isset($row[$colMap['isbn']])) ? trim($row[$colMap['isbn']]) : null;
                 $kategoriName = ($colMap['kategori'] !== false && isset($row[$colMap['kategori']])) ? trim($row[$colMap['kategori']]) : '';
+                $kodeLemari = ($colMap['kode_lemari'] !== false && isset($row[$colMap['kode_lemari']])) ? trim($row[$colMap['kode_lemari']]) : '';
                 $kodeLaci = ($colMap['kode_laci'] !== false && isset($row[$colMap['kode_laci']])) ? trim($row[$colMap['kode_laci']]) : '';
                 $noInventaris = ($colMap['no_inventaris'] !== false && isset($row[$colMap['no_inventaris']])) ? trim($row[$colMap['no_inventaris']]) : null;
                 $kondisi = ($colMap['kondisi'] !== false && isset($row[$colMap['kondisi']])) ? strtolower(trim($row[$colMap['kondisi']])) : 'baik';
@@ -441,12 +597,26 @@ class BukuController extends Controller
                     }
                 }
 
-                // 2. Resolve Laci Lokasi
+                // 2. Resolve Lemari & Laci Lokasi
                 $laciId = null;
                 if ($kodeLaci) {
                     $laciKey = strtolower($kodeLaci);
                     if (isset($laciMap[$laciKey])) {
                         $laciId = $laciMap[$laciKey]->id;
+                    } elseif ($kodeLemari) {
+                        $lemariKey = strtolower($kodeLemari);
+                        if (!isset($lemariMap[$lemariKey])) {
+                            $lemariMap[$lemariKey] = Lemari::create([
+                                'kode_lemari' => $kodeLemari,
+                                'nama_lokasi' => $kodeLemari,
+                            ]);
+                        }
+                        $newLaci = Laci::create([
+                            'kode_laci' => $kodeLaci,
+                            'id_lemari' => $lemariMap[$lemariKey]->id,
+                        ]);
+                        $laciMap[$laciKey] = $newLaci;
+                        $laciId = $newLaci->id;
                     }
                 }
 

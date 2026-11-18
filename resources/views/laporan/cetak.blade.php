@@ -102,7 +102,8 @@
 <div class="no-print" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
     <div style="font-weight: bold; font-size: 16px;">Pratinjau Cetak / Ekspor Laporan</div>
     <div style="display: flex; gap: 10px;">
-        <button class="btn-print" onclick="window.print()">🖨️ Cetak Dokumen Ini</button>
+        <button class="btn-print" onclick="window.print()">🖨️ Cetak / Simpan PDF</button>
+        <a href="{{ route('laporan.export_excel', request()->query()) }}" class="btn-print" style="background:#28a745; text-decoration:none; display:inline-flex; align-items:center;">📥 Ekspor Excel</a>
         <button class="btn-print" style="background:#8592a3;" onclick="window.close()">Tutup</button>
     </div>
 </div>

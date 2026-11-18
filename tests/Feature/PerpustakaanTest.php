@@ -316,4 +316,141 @@ class PerpustakaanTest extends TestCase
 
         $response->assertRedirect(route('landing.bukti_register', $anggota->id));
     }
+
+    public function test_laporan_export_excel_works_for_all_report_types()
+    {
+        $kunjungan = Kunjungan::create([
+            'id_anggota' => $this->anggota->id,
+            'tanggal' => Carbon::today()->format('Y-m-d'),
+            'waktu_masuk' => '08:00:00',
+            'status' => 'Selesai',
+        ]);
+
+        DetailKunjunganBuku::create([
+            'id_kunjungan' => $kunjungan->id,
+            'id_eksemplar' => $this->eksemplar1->id,
+            'waktu_scan' => Carbon::now(),
+        ]);
+
+        $peminjaman = Peminjaman::create([
+            'id_kunjungan' => $kunjungan->id,
+            'id_anggota' => $this->anggota->id,
+            'id_eksemplar' => $this->eksemplar1->id,
+            'id_user' => $this->admin->id,
+            'tgl_pinjam' => Carbon::today()->subDays(10),
+            'tgl_jatuh_tempo' => Carbon::today()->subDays(3),
+            'tgl_kembali' => Carbon::today(),
+            'status' => 'Selesai',
+            'kondisi_kembali' => 'baik',
+        ]);
+
+        Denda::create([
+            'id_peminjaman' => $peminjaman->id,
+            'jumlah_hari_terlambat' => 3,
+            'nominal' => 3000,
+            'status_bayar' => 'Belum Lunas',
+        ]);
+
+        $indexResponse = $this->actingAs($this->admin)->get(route('laporan.index', ['tab' => 'peminjaman']));
+        $indexResponse->assertStatus(200);
+        $indexResponse->assertSee('laporan/export-excel');
+
+        $tglMulai = Carbon::today()->startOfMonth()->format('Y-m-d');
+        $tglSelesai = Carbon::today()->format('Y-m-d');
+
+        foreach (['peminjaman', 'pengembalian', 'denda', 'kunjungan', 'buku'] as $jenis) {
+            $response = $this->actingAs($this->admin)->get(route('laporan.export_excel', [
+                'jenis' => $jenis,
+                'tgl_mulai' => $tglMulai,
+                'tgl_selesai' => $tglSelesai,
+            ]));
+
+            $response->assertStatus(200);
+            $this->assertStringContainsString(
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                $response->headers->get('content-type')
+            );
+            $this->assertStringContainsString('.xlsx', $response->headers->get('content-disposition'));
+
+            $content = $response->streamedContent();
+            $tmpFile = tempnam(sys_get_temp_dir(), 'xlsx_test_');
+            file_put_contents($tmpFile, $content);
+
+            try {
+                $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($tmpFile);
+                $sheet = $spreadsheet->getActiveSheet();
+                $this->assertSame('Perpustakaan ISRA Test', $sheet->getCell('A1')->getValue());
+                $this->assertNotEmpty($sheet->getCell('A6')->getValue());
+                $this->assertNotEmpty($sheet->getCell('B7')->getValue());
+            } finally {
+                @unlink($tmpFile);
+            }
+        }
+    }
+
+    public function test_buku_import_template_includes_guide_sheet_and_is_readable()
+    {
+        $templatePath = public_path('templates/template_import_buku.xlsx');
+        @unlink($templatePath);
+
+        $response = $this->actingAs($this->admin)->get(route('buku.template_excel'));
+        $response->assertStatus(200);
+        $this->assertFileExists($templatePath);
+
+        $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($templatePath);
+        $this->assertSame(2, $spreadsheet->getSheetCount());
+        $this->assertSame('Template Buku & Eksemplar', $spreadsheet->getSheet(0)->getTitle());
+        $this->assertSame('Petunjuk Pengisian', $spreadsheet->getSheet(1)->getTitle());
+        $this->assertStringContainsString('PETUNJUK PENGISIAN', (string) $spreadsheet->getSheet(1)->getCell('A1')->getValue());
+
+        // Ensure XlsxHelper::read() still reads Sheet 1 headers & sample rows cleanly
+        $rows = \App\Helpers\XlsxHelper::read($templatePath);
+        $this->assertGreaterThan(1, count($rows));
+        $this->assertSame('kode_induk_buku', $rows[0][0]);
+        $this->assertSame('judul', $rows[0][2]);
+        $this->assertContains('kode_lemari', $rows[0]);
+    }
+
+    public function test_buku_import_auto_creates_lemari_and_laci_when_provided()
+    {
+        $templatePath = public_path('templates/template_import_buku.xlsx');
+        @unlink($templatePath);
+
+        $tmpXlsx = tempnam(sys_get_temp_dir(), 'import_lemari_') . '.xlsx';
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $headers = ['kode_induk_buku', 'kode_eksemplar', 'judul', 'pengarang', 'kategori', 'kode_lemari', 'kode_laci', 'kondisi', 'status'];
+        $row = ['BK-IMP-01', 'BK-IMP-01.01', 'Buku Lemari Baru', 'Penulis A', 'Fiksi', 'LMR-BARU', 'LAC-BARU', 'baik', 'tersedia'];
+        foreach ($headers as $i => $h) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+            $sheet->setCellValue("{$col}1", $h);
+            $sheet->setCellValue("{$col}2", $row[$i]);
+        }
+        (new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet))->save($tmpXlsx);
+
+        try {
+            $uploaded = new \Illuminate\Http\UploadedFile($tmpXlsx, 'import.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null, true);
+            $response = $this->actingAs($this->admin)->post(route('buku.import_excel'), [
+                'file_excel' => $uploaded,
+                'mode_duplikat' => 'skip',
+            ]);
+
+            $response->assertRedirect();
+            $this->assertDatabaseHas('lemari', ['kode_lemari' => 'LMR-BARU']);
+            $this->assertDatabaseHas('laci', ['kode_laci' => 'LAC-BARU']);
+            $eksemplar = EksemplarBuku::where('kode_eksemplar', 'BK-IMP-01.01')->first();
+            $this->assertNotNull($eksemplar);
+            $this->assertSame('LMR-BARU', $eksemplar->laci->lemari->kode_lemari);
+        } finally {
+            @unlink($tmpXlsx);
+        }
+    }
+
+    public function test_buku_can_be_deleted_when_no_active_loans()
+    {
+        $response = $this->actingAs($this->admin)->delete(route('buku.destroy', $this->buku->id));
+
+        $response->assertRedirect(route('buku.index'));
+        $this->assertDatabaseMissing('buku', ['id' => $this->buku->id]);
+    }
 }

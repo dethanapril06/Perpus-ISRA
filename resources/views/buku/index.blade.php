@@ -257,9 +257,9 @@
                         <div class="d-flex align-items-center justify-content-between">
                             <div>
                                 <h6 class="fw-bold mb-1 text-primary"><i class="bx bx-spreadsheet me-1"></i> Template Excel Per-Eksemplar</h6>
-                                <small class="text-muted d-block">1 baris Excel = 1 eksemplar fisik buku perpustakaan.</small>
+                                <small class="text-muted d-block">1 baris Excel = 1 eksemplar fisik buku (dilengkapi sheet Petunjuk Pengisian).</small>
                             </div>
-                            <a href="{{ route('buku.template_excel') }}" class="btn btn-sm btn-primary">
+                            <a href="{{ route('buku.template_excel', ['v' => 3]) }}" class="btn btn-sm btn-primary">
                                 <i class="bx bx-download me-1"></i> Unduh (.xlsx)
                             </a>
                         </div>
